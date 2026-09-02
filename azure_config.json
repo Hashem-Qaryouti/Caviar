@@ -1,0 +1,4 @@
+{
+    "connection_string": "DefaultEndpointsProtocol=https;AccountName=caviardata;AccountKey=pNEGVJubm6WTUuRlRN7hKmLh5mLsb2b4Oqomaq/PF/lZ/9EaUzn/DlboDsMFxgeeoa4R1dp9W9cQ+AStXeuMhQ==;EndpointSuffix=core.windows.net",
+    "container_name": "vr-dataset"
+}

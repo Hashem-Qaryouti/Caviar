@@ -11,7 +11,9 @@ from gopro_recorder import (
     beep, setup_both, start_both, stop_both,
     get_last_file, download_file, download_both, delete_file, wait_for_camera,
     lookup_pair, is_done, mark_done, add_remark, get_save_folder, delete_recording,
+    EXCEL_PATH, BASE_FOLDER,
 )
+from azure_sync import import_excel, export_excel, upload_trial_files
 
 
 class App(tk.Tk):
@@ -26,6 +28,9 @@ class App(tk.Tk):
         self._test_cancelled = False
         self._log_file = None
         self._record_start_time = None
+        self._checklist_imported = False
+        self._checklist_exported = False
+        self._trials_done_this_session = 0
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -149,9 +154,9 @@ class App(tk.Tk):
 
         self.btn_start = tk.Button(btn_frame, text="▶  Start Trial",
                                    font=("Helvetica Neue", 12, "bold"),
-                                   bg="#1565c0", fg="white", relief="flat",
+                                   bg="#424242", fg="#aaaaaa", relief="flat",
                                    padx=20, pady=10, cursor="hand2",
-                                   command=self._start_trial)
+                                   state="disabled", command=self._start_trial)
         self.btn_start.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
         self.btn_stop = tk.Button(btn_frame, text="■  Stop & Save",
@@ -174,9 +179,9 @@ class App(tk.Tk):
 
         self.btn_test = tk.Button(test_frame, text="🔌  Test Cameras (no save)",
                                   font=("Helvetica Neue", 11, "bold"),
-                                  bg="#4a3800", fg="#ffd54f", relief="flat",
+                                  bg="#424242", fg="#aaaaaa", relief="flat",
                                   padx=20, pady=8, cursor="hand2",
-                                  command=self._test_cameras)
+                                  state="disabled", command=self._test_cameras)
         self.btn_test.pack(side="left", expand=True, fill="x")
 
         self.btn_test_stop = tk.Button(test_frame, text="■  Stop Test",
@@ -185,6 +190,33 @@ class App(tk.Tk):
                                        padx=20, pady=8, cursor="hand2",
                                        state="disabled", command=self._stop_test)
         self.btn_test_stop.pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # Azure sync row
+        sync_frame = tk.Frame(self, bg="#0f1923")
+        sync_frame.pack(pady=(6, 0), padx=20, fill="x")
+
+        self.btn_import = tk.Button(sync_frame, text="📥  Import Checklist",
+                                    font=("Helvetica Neue", 11, "bold"),
+                                    bg="#1a3a1a", fg="#81c784", relief="flat",
+                                    padx=20, pady=8, cursor="hand2",
+                                    command=self._import_excel)
+        self.btn_import.pack(side="left", expand=True, fill="x")
+
+        self.btn_export = tk.Button(sync_frame, text="📤  Export Checklist",
+                                    font=("Helvetica Neue", 11, "bold"),
+                                    bg="#424242", fg="#aaaaaa", relief="flat",
+                                    padx=20, pady=8, cursor="hand2",
+                                    state="disabled", command=self._export_excel)
+        self.btn_export.pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # Session status hint
+        self.lbl_session = tk.Label(
+            self, bg="#0f1923",
+            text="⬇  Import the checklist before recording any trials.",
+            font=("Helvetica Neue", 10, "italic"),
+            fg="#f0a030"
+        )
+        self.lbl_session.pack(pady=(6, 0))
 
         # Log
         log_frame = tk.Frame(self, bg="#0f1923")
@@ -542,6 +574,7 @@ class App(tk.Tk):
         self.log(f"{'='*40}\n")
 
 
+
     # ── Test (no save) ────────────────────────────────────
     def _test_cameras(self):
         self._test_recording = False
@@ -659,6 +692,79 @@ class App(tk.Tk):
         self.btn_start.config(state="normal", bg="#1565c0", fg="white")
 
 
+    # ── Import Lock ───────────────────────────────────────
+    def _unlock_all(self):
+        """Enable all controls after a successful import."""
+        self.btn_start.config(state="normal",   bg="#1565c0", fg="white")
+        self.btn_test.config(state="normal",    bg="#4a3800", fg="#ffd54f")
+        self.btn_export.config(state="normal",  bg="#1a3a1a", fg="#81c784")
+        self.btn_import.config(state="normal",  bg="#1a3a1a", fg="#81c784")
+        self.btn_stop.config(state="disabled",  bg="#424242", fg="#aaaaaa")
+        self.btn_delete.config(state="disabled",bg="#424242", fg="#aaaaaa")
+        self.btn_test_stop.config(state="disabled", bg="#424242", fg="#aaaaaa")
+        self.lbl_session.config(
+            text="✅  Checklist imported — record your trials, then export before closing.",
+            fg="#81c784"
+        )
+
+    # ── Azure Sync ────────────────────────────────────────
+    def _import_excel(self):
+        if self._recording:
+            messagebox.showwarning("Recording Active", "Cannot import checklist while a trial is in progress.")
+            return
+        if self._checklist_imported:
+            if not messagebox.askyesno("Import Checklist",
+                                       "Download the shared checklist from Azure?\n\n"
+                                       "Your local copy will be replaced.\n"
+                                       "A backup (.bak) will be saved first."):
+                return
+        self.btn_import.config(state="disabled", bg="#424242", fg="#aaaaaa")
+        self.log("\n── Importing checklist from Azure...")
+
+        def _run():
+            try:
+                import_excel(EXCEL_PATH, log_fn=self.log)
+                self.log("  ✅ Checklist imported — Excel is now up to date\n")
+                self._checklist_imported = True
+                self._checklist_exported = False
+                self.after(0, self._unlock_all)
+            except Exception as e:
+                self.log(f"  ✗ Import failed: {e}\n")
+                self.after(0, lambda: messagebox.showerror("Import Failed", str(e)))
+                self.after(0, lambda: self.btn_import.config(
+                    state="normal", bg="#1a3a1a", fg="#81c784"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _export_excel(self):
+        if self._recording:
+            messagebox.showwarning("Recording Active", "Cannot export checklist while a trial is in progress.")
+            return
+        if not messagebox.askyesno("Export Checklist",
+                                   "Upload your local checklist to Azure?\n\n"
+                                   "This will overwrite the shared copy."):
+            return
+        self.btn_export.config(state="disabled", bg="#424242", fg="#aaaaaa")
+        self.log("\n── Exporting checklist to Azure...")
+
+        def _run():
+            try:
+                export_excel(EXCEL_PATH, log_fn=self.log)
+                self.log("  ✅ Checklist exported — Azure copy is now up to date\n")
+                self._checklist_exported = True
+                self.after(0, lambda: self.lbl_session.config(
+                    text="☁️  Checklist exported — you may now close the app safely.",
+                    fg="#64b5f6"
+                ))
+            except Exception as e:
+                self.log(f"  ✗ Export failed: {e}\n")
+                self.after(0, lambda: messagebox.showerror("Export Failed", str(e)))
+            finally:
+                self.after(0, lambda: self.btn_export.config(
+                    state="normal", bg="#1a3a1a", fg="#81c784"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ── Close Protection ──────────────────────────────────
     def _on_close(self):
         if self._recording or self._test_recording:
@@ -670,9 +776,21 @@ class App(tk.Tk):
                 "Close anyway?"
             ):
                 return
-            # Stop cameras in background before closing
             import threading as _t
             _t.Thread(target=stop_both, daemon=True).start()
+            self.destroy()
+            return
+
+        # Block closing until checklist is exported
+        if self._checklist_imported and not self._checklist_exported:
+            messagebox.showwarning(
+                "Export Required — Cannot Close",
+                "You must export the checklist before closing.\n\n"
+                "Your session changes have not been saved to Azure yet.\n\n"
+                "➡  Press  📤 Export Checklist  then close again."
+            )
+            return
+
         self.destroy()
 
 
