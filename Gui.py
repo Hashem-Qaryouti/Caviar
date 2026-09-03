@@ -20,7 +20,9 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("GoPro Trial Recorder")
-        self.resizable(False, False)
+        self.resizable(False, True)
+        self.geometry("620x780")
+        self.minsize(620, 600)
         self.configure(bg="#0f1923")
         self._recording = False
         self._trial_code = None
@@ -223,10 +225,14 @@ class App(tk.Tk):
         log_frame.pack(fill="both", expand=True, padx=20, pady=(10, 20))
         tk.Label(log_frame, text="Log", font=("Helvetica Neue", 9),
                  bg="#0f1923", fg="#4a6080").pack(anchor="w")
+        log_scroll = tk.Scrollbar(log_frame, orient="vertical")
+        log_scroll.pack(side="right", fill="y")
         self.log_box = tk.Text(log_frame, height=10, bg="#0d1117", fg="#c9d1d9",
                                font=("Courier New", 9), relief="flat",
-                               state="disabled", wrap="word")
-        self.log_box.pack(fill="both", expand=True)
+                               state="disabled", wrap="word",
+                               yscrollcommand=log_scroll.set)
+        self.log_box.pack(side="left", fill="both", expand=True)
+        log_scroll.config(command=self.log_box.yview)
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -466,7 +472,8 @@ class App(tk.Tk):
             self._finish_trial_inner(code)
         finally:
             # Always restore controls no matter what happened
-            self._close_log_file()
+            # Schedule close AFTER all pending log writes (also queued via after)
+            self.after(0, self._close_log_file)
             self.after(0, lambda: self._set_controls(True))
             # Enable delete if the trial is marked done OR files exist on disk
             folder = get_save_folder(code)

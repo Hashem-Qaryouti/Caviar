@@ -79,6 +79,17 @@ def import_excel(local_path, log_fn=None):
             if log_fn:
                 log_fn(f"  ⚠ Could not back up local file: {e}")
 
+    # Check the file is not open in Excel (Windows locks it)
+    if os.path.exists(local_path):
+        try:
+            with open(local_path, "r+b"):
+                pass
+        except PermissionError:
+            raise PermissionError(
+                f"Cannot overwrite '{os.path.basename(local_path)}' — it is open in another program.\n\n"
+                "Please close the Excel file first, then try importing again."
+            )
+
     os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
     with open(local_path, "wb") as f:
         stream = blob.download_blob()
